@@ -870,6 +870,15 @@ def is_carta_credito(metodo: Optional[str]) -> bool:
     return bool(metodo and metodo in CARTE_ATTIVE_MAP)
 
 
+def ha_copia_carbone(metodo: Optional[str]) -> bool:
+    if not metodo or metodo not in CARTE_ATTIVE_MAP:
+        return False
+    if "nexi" in metodo.lower():
+        return False
+    cfg = CARTE_ATTIVE_MAP.get(metodo) or {}
+    return int(cfg.get("addebito", 0)) > 0
+
+
 def calcola_addebito_carta(metodo: str, data_acquisto: date) -> date:
     return calcola_data_addebito_cc(metodo, data_acquisto, CARTE_ATTIVE_MAP)
 
@@ -1094,7 +1103,7 @@ def render_movimento(
         tipo_label = "ricorrente" if item.tipo != TIPO_IMMEDIATO else "variabile"
         if is_copia_carbone:
             data_rif = item.data_acquisto or item.data
-            badge = f'<span class="badge badge-carbon">🧾 Copia carbone · Addebito {data_breve(item.data)}</span>'
+            badge = f'<span class="badge badge-carbon">· Addebito {data_breve(item.data)}</span>'
             meta = f"Acquisto con {esc(item.metodo or 'Carta')} · già registrato, scalato il {data_italiana(item.data)} (0 € oggi)"
             importo_cls = "carbon"
             importo_txt = f"({fmt_money(abs(float(item.importo or 0)))})"
@@ -1771,7 +1780,7 @@ def render_modals(ctx: dict) -> str:
             <h2 id="titolo-wizard">⚙️ Configurazione iniziale</h2>
             <p class="hint" id="wiz-subtitle">Personalizza ciclo contabile, carte di credito, risparmio e credenziali</p>
           </div>
-          <button type="button" class="icon-btn" onclick="closeModal('modal-wizard')" aria-label="Chiudi">×</button>
+          <div style="display:flex;align-items:center;gap:8px"><button type="button" class="btn btn-ghost" onclick="dismissWizard()" title="Chiudi e non mostrare più all'avvio">Non mostrare più</button><button type="button" class="icon-btn" onclick="dismissWizard()" aria-label="Chiudi">×</button></div>
         </div>
         <form method="post" action="/save-wizard" id="form-wizard" class="modal-body" style="display:grid;gap:16px">
           {nascosti}
@@ -1958,6 +1967,12 @@ def render_dashboard(ctx: dict) -> str:
 window.CARTE_CREDITO = {json.dumps([c["nome"] for c in ctx.get("carte_credito", [])])};
 window.CARTE_CONFIG_INIT = {json.dumps(ctx.get("carte_credito", []))};
 window.WIZARD_AUTO_OPEN = {str(not ctx.get("wizard_completato", True)).lower()};
+
+window.dismissWizard = function(){{
+  window.WIZARD_AUTO_OPEN = false;
+  closeModal("modal-wizard");
+  fetch("/dismiss-wizard", {{method: "POST"}}).catch(function(){{}});
+}};
 
 window.openWizardStep = function(n){{
   for(var i=1;i<=4;i++){{
@@ -2996,7 +3011,7 @@ def dashboard(
     )
     copie_carbone_visibili = [
         s for s in copie_carbone_raw
-        if metodo is None or s.metodo == metodo
+        if ha_copia_carbone(s.metodo) and (metodo is None or s.metodo == metodo)
     ]
 
     entrate_totali = round(sum(float(e.importo or 0) for e in entrate), 2)
@@ -3172,6 +3187,17 @@ def dashboard(
     }
     return HTMLResponse(render_dashboard(ctx))
 
+
+
+@app.post("/dismiss-wizard")
+def dismiss_wizard(db: Session = Depends(get_db)) -> JSONResponse:
+    row = db.get(Config, "wizard_completato")
+    if row is None:
+        db.add(Config(chiave="wizard_completato", valore="1"))
+    else:
+        row.valore = "1"
+    db.commit()
+    return JSONResponse({"ok": True})
 
 
 @app.get("/api/cerca")
