@@ -1048,7 +1048,11 @@ def hidden_vista(ciclo_key: str, vista_metodo: Optional[str]) -> str:
 
 
 def render_movimento(
-    tipo: str, item: object, ciclo_key: str, vista_metodo: Optional[str]
+    tipo: str,
+    item: object,
+    ciclo_key: str,
+    vista_metodo: Optional[str],
+    is_copia_carbone: bool = False,
 ) -> str:
     nascosti = hidden_vista(ciclo_key, vista_metodo)
     if tipo == "entrata":
@@ -1088,6 +1092,27 @@ def render_movimento(
             "pagata": bool(item.pagata),
         }
         tipo_label = "ricorrente" if item.tipo != TIPO_IMMEDIATO else "variabile"
+        if is_copia_carbone:
+            data_rif = item.data_acquisto or item.data
+            badge = f'<span class="badge badge-carbon">🧾 Copia carbone · Addebito {data_breve(item.data)}</span>'
+            meta = f"Acquisto con {esc(item.metodo or 'Carta')} · già registrato, scalato il {data_italiana(item.data)} (0 € oggi)"
+            importo_cls = "carbon"
+            importo_txt = f"({fmt_money(abs(float(item.importo or 0)))})"
+            azioni = (
+                f'<button type="button" class="icon-btn small" data-mov=\'{json_attr(movimento)}\' '
+                'onclick="openEdit(this)" title="Modifica spesa originale" aria-label="Modifica spesa">✎</button>'
+            )
+            return f"""
+    <div class="mov-row carbon-copy">
+      <div class="mov-date"><strong>{data_breve(data_rif)}</strong><span>{nome_giorno(data_rif)}</span></div>
+      <div class="mov-main">
+        <div class="mov-title">{esc(item.descrizione or "Senza descrizione")} {badge}</div>
+        <div class="mov-meta">{meta}</div>
+      </div>
+      <div class="mov-amount money {importo_cls}">{importo_txt}</div>
+      <div class="mov-actions">{azioni}</div>
+    </div>
+    """
         if is_carta_credito(item.metodo):
             stato = "pagata" if item.pagata else "da pagare"
             meta = f"Spesa · {esc(item.metodo or '—')} · {tipo_label} · {stato}"
@@ -1334,12 +1359,16 @@ def render_sections(ctx: dict) -> str:
     entrate = ctx["entrate"]
     spese_visibili = ctx["spese_visibili"]
 
+    copie_carbone = ctx.get("copie_carbone_visibili", [])
     per_giorno: dict[date, dict] = {}
     if vista_metodo != "Da valutare":
         for entrata in entrate:
-            per_giorno.setdefault(entrata.data, {"entrate": [], "spese": []})["entrate"].append(entrata)
+            per_giorno.setdefault(entrata.data, {"entrate": [], "spese": [], "copie": []})["entrate"].append(entrata)
     for spesa in spese_visibili:
-        per_giorno.setdefault(spesa.data, {"entrate": [], "spese": []})["spese"].append(spesa)
+        per_giorno.setdefault(spesa.data, {"entrate": [], "spese": [], "copie": []})["spese"].append(spesa)
+    for copia in copie_carbone:
+        if copia.data_acquisto:
+            per_giorno.setdefault(copia.data_acquisto, {"entrate": [], "spese": [], "copie": []})["copie"].append(copia)
 
     def build_day_card(giorno: date) -> str:
         voci = per_giorno[giorno]
@@ -1350,13 +1379,15 @@ def render_sections(ctx: dict) -> str:
             totali_html.append(f'<span class="money positive">+{fmt_money(tot_e)}</span>')
         if tot_s:
             totali_html.append(f'<span class="money negative">-{fmt_money(tot_s)}</span>')
+        if not totali_html and voci["copie"]:
+            totali_html.append('<span class="hint">Solo promemoria carta (0 € oggi)</span>')
 
         badge_giorno = '<span class="badge badge-blue">Oggi</span>' if giorno == oggi else ""
 
-        righe_giorno = "".join(
-            render_movimento("entrata", e, ciclo_key, vista_metodo) for e in voci["entrate"]
-        ) + "".join(
-            render_movimento("spesa", s, ciclo_key, vista_metodo) for s in voci["spese"]
+        righe_giorno = (
+            "".join(render_movimento("entrata", e, ciclo_key, vista_metodo) for e in voci["entrate"])
+            + "".join(render_movimento("spesa", s, ciclo_key, vista_metodo) for s in voci["spese"])
+            + "".join(render_movimento("spesa", c, ciclo_key, vista_metodo, is_copia_carbone=True) for c in voci["copie"])
         )
         ha_spese_da_pagare = any(not getattr(s, "pagata", True) for s in voci["spese"])
         if ha_spese_da_pagare:
@@ -1380,7 +1411,7 @@ def render_sections(ctx: dict) -> str:
     totale_oggi = 0
     if oggi in per_giorno:
         voci_oggi = per_giorno[oggi]
-        totale_oggi = len(voci_oggi["entrate"]) + len(voci_oggi["spese"])
+        totale_oggi = len(voci_oggi["entrate"]) + len(voci_oggi["spese"]) + len(voci_oggi["copie"])
         righe_oggi = build_day_card(oggi)
     else:
         righe_oggi = (
@@ -1395,7 +1426,7 @@ def render_sections(ctx: dict) -> str:
         key=lambda g: g.toordinal(),
     )
     totale_mese = sum(
-        len(per_giorno[g]["entrate"]) + len(per_giorno[g]["spese"])
+        len(per_giorno[g]["entrate"]) + len(per_giorno[g]["spese"]) + len(per_giorno[g]["copie"])
         for g in giorni_mese
     )
     righe_mese = "".join(build_day_card(g) for g in giorni_mese)
@@ -2132,6 +2163,9 @@ body.hide-money .money{filter:blur(7px);opacity:.7;user-select:none}
 }
 .mov-row.unpaid-row{animation:pulse-unpaid 3.6s ease-in-out infinite;border-radius:10px;padding-left:10px;padding-right:8px;margin:3px 0}
 .badge-unpaid{animation:badge-pulse-slow 3.6s ease-in-out infinite}
+.mov-row.carbon-copy{background:#f8fafc;border:1px dashed #94a3b8;border-radius:10px;padding:10px;margin:4px 0;opacity:.85}
+.badge-carbon{background:#e0e7ff;color:#3730a3;border:1px solid #c7d2fe}
+.money.carbon{color:var(--muted);font-weight:700}
 .badge-blue{background:#dbeafe;color:#1e40af}
 .mini-btn{border:1px solid var(--border);background:var(--surface);color:var(--muted);border-radius:8px;padding:5px 9px;font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.03em;cursor:pointer}
 .mini-btn:hover{background:#f8fafc;color:var(--text)}
@@ -2949,6 +2983,21 @@ def dashboard(
         spesa for spesa in spese
         if metodo is None or spesa.metodo == metodo
     ]
+    copie_carbone_raw = (
+        db.query(Spesa)
+        .filter(
+            Spesa.data_acquisto.isnot(None),
+            Spesa.data_acquisto >= inizio,
+            Spesa.data_acquisto <= fine,
+            Spesa.data != Spesa.data_acquisto,
+        )
+        .order_by(Spesa.data_acquisto, Spesa.id)
+        .all()
+    )
+    copie_carbone_visibili = [
+        s for s in copie_carbone_raw
+        if metodo is None or s.metodo == metodo
+    ]
 
     entrate_totali = round(sum(float(e.importo or 0) for e in entrate), 2)
     uscite_totali = round(sum(float(s.importo or 0) for s in spese), 2)
@@ -3091,6 +3140,7 @@ def dashboard(
         "entrate": entrate,
         "spese": spese,
         "spese_visibili": spese_visibili,
+        "copie_carbone_visibili": copie_carbone_visibili,
         "entrate_totali": entrate_totali,
         "uscite_totali": uscite_totali,
         "spese_fisse_display": spese_fisse_display,
@@ -3818,4 +3868,4 @@ def fix_carte_supabase(db: Session = Depends(get_db)):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("app:app", host="127.0.0.1", port=8090, reload=True)
