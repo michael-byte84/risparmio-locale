@@ -1,0 +1,14 @@
+RISPARMIO LOCALE - AVVIO RAPIDO (Windows, macOS, Linux)
+
+Requisito unico: Python 3.10 o superiore installato sul computer.
+
+- WINDOWS: Fai doppio clic su "avvia_windows.bat".
+  (Se installi Python su Windows, spunta "Add Python to PATH").
+
+- MACOS: Fai doppio clic su "avvia_mac.command".
+  (Solo la prima volta: tasto destro sul file -> Apri, per autorizzare l'esecuzione).
+
+- LINUX: Esegui "./avvia_linux.sh" da terminale (oppure doppio clic -> Esegui nel terminale).
+
+Al primo avvio l'app si aprira' automaticamente nel browser per creare username e password locali.
+I tuoi dati restano salvati esclusivamente nella cartella dell'app (file risparmio.db).
